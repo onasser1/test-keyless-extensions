@@ -65,6 +65,6 @@ jobs:
           EOF
 
           cosign attest --yes \
-            --type cosign.sigstore.dev/attestation/vuln/v1 \
+            --type vuln \
             --predicate vuln-report.json \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${DIGEST}
