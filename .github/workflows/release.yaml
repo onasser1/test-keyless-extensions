@@ -1,12 +1,12 @@
 name: Release
 on:
   push:
-    branches: [main]
+    branches: [master]
 
 permissions:
   contents: read
-  packages: write # push to GHCR
-  id-token: write # OIDC token for keyless signing
+  packages: write
+  id-token: write
 
 env:
   REGISTRY: ghcr.io
