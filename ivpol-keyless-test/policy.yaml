@@ -1,0 +1,41 @@
+apiVersion: policies.kyverno.io/v1
+kind: ImageValidatingPolicy
+metadata:
+  name: require-vulnerability-scan
+spec:
+  validationActions: [Deny]
+  webhookConfiguration:
+    timeoutSeconds: 15
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["pods"]
+        operations: ["CREATE", "UPDATE"]
+  matchImageReferences:
+    - glob: "ghcr.io/onasser1/test-keyless-extensions:*"
+  attestors:
+    - name: cosign
+      cosign:
+        keyless:
+          identities:
+            - subject: "https://github.com/onasser1/test-keyless-extensions/.github/workflows/release.yaml@refs/heads/master"
+              issuer: "https://token.actions.githubusercontent.com"
+          additionalExtensions:
+            githubWorkflowRepository: onasser1/test-keyless-extensions
+            githubWorkflowRef: refs/heads/diff-branch
+            githubWorkflowTrigger: push
+        ctlog:
+          url: "https://rekor.sigstore.dev"
+  attestations:
+    - name: cosignAttestation
+      intoto:
+        type: https://cosign.sigstore.dev/attestation/vuln/v1
+  validations:
+    - expression: >-
+        images.containers.map(image, verifyImageSignatures(image, [attestors.cosign])).all(e, e > 0)
+      message: "Failed image signature verification"
+    - expression: >-
+        images.containers.map(image, verifyAttestationSignatures(image, attestations.cosignAttestation, [attestors.cosign])).all(e, e > 0)
+      message: "Failed to verify vulnerability scan attestation with Cosign keyless"

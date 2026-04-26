@@ -1,0 +1,15 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: ivpol-cosign-keyless-test
+policies:
+  - policy.yaml
+resources:
+  - good-pod.yaml
+results:
+  - isImageValidatingPolicy: true
+    kind: Pod
+    policy: require-vulnerability-scan
+    resources:
+      - good-pod
+    result: fail
