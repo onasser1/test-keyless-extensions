@@ -57,7 +57,7 @@ jobs:
       
       - name: Apply updated ImageValidatingPolicy CRD
         run: |
-          kubectl apply --server-side -f crd/policies.kyverno.io_imagevalidatingpolicies.yaml
+          kubectl apply --server-side --force-conflicts -f crd/policies.kyverno.io_imagevalidatingpolicies.yaml
 
       - name: Wait for Kyverno ready
         run: |
