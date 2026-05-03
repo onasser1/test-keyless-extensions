@@ -54,6 +54,10 @@ jobs:
             --create-namespace \
             --wait \
             --timeout 300s
+      
+      - name: Apply updated ImageValidatingPolicy CRD
+        run: |
+          kubectl apply --server-side -f crd/policies.kyverno.io_imagevalidatingpolicies.yaml
 
       - name: Wait for Kyverno ready
         run: |
