@@ -1,0 +1,113 @@
+name: Test Keyless Extensions
+
+permissions: {}
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  test-keyless-extensions:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        k8s-version:
+          - v1.33.7
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: v2.6.1
+
+      - name: Install crane
+        run: |
+          set -e
+          CRANE_VERSION=0.20.2
+          curl -sL "https://github.com/google/go-containerregistry/releases/download/v${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz" | tar xz -C /usr/local/bin crane
+
+      - name: Install chainsaw
+        uses: kyverno/action-install-chainsaw@v0.2.12
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          node_image: kindest/node:${{ matrix.k8s-version }}
+          cluster_name: kind
+
+      - name: Install Kyverno
+        run: |
+          set -e
+          helm repo add kyverno https://kyverno.github.io/kyverno/
+          helm repo update
+          helm install kyverno kyverno/kyverno \
+            --namespace kyverno \
+            --create-namespace \
+            --wait \
+            --timeout 300s
+
+      - name: Wait for Kyverno ready
+        run: |
+          set -e
+          echo "Waiting for Kyverno deployments..."
+          kubectl -n kyverno wait --for=condition=available deployment --all --timeout=300s
+          echo "Kyverno is ready"
+
+      - name: Create and sign test image
+        run: |
+          set -e
+          DIGEST=$(crane digest cgr.dev/chainguard/static)
+          IMAGE_NAME=$(uuidgen | tr "[:upper:]" "[:lower:]")
+          TEST_IMAGE_URL=ttl.sh/${IMAGE_NAME}:1h
+          crane copy cgr.dev/chainguard/static@${DIGEST} ${TEST_IMAGE_URL}
+          cosign sign ${TEST_IMAGE_URL} -y
+          echo "TEST_IMAGE_URL=${TEST_IMAGE_URL}" >> $GITHUB_ENV
+          echo "CERT_GITHUB_WORKFLOW_REPOSITORY=${{ github.repository }}" >> $GITHUB_ENV
+          echo "CERT_GITHUB_WORKFLOW_REF=${{ github.ref }}" >> $GITHUB_ENV
+          echo "Signed image: ${TEST_IMAGE_URL}"
+          echo "Repository: ${{ github.repository }}"
+          echo "Ref: ${{ github.ref }}"
+
+      - name: Verify environment
+        run: |
+          echo "TEST_IMAGE_URL=${TEST_IMAGE_URL}"
+          echo "CERT_GITHUB_WORKFLOW_REPOSITORY=${CERT_GITHUB_WORKFLOW_REPOSITORY}"
+          echo "CERT_GITHUB_WORKFLOW_REF=${CERT_GITHUB_WORKFLOW_REF}"
+          cosign verify ${TEST_IMAGE_URL} \
+            --certificate-identity-regexp='.*' \
+            --certificate-oidc-issuer='https://token.actions.githubusercontent.com' | head -5 || true
+
+      - name: Test with Chainsaw
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TEST_IMAGE_URL: ${{ env.TEST_IMAGE_URL }}
+          CERT_GITHUB_WORKFLOW_REPOSITORY: ${{ env.CERT_GITHUB_WORKFLOW_REPOSITORY }}
+          CERT_GITHUB_WORKFLOW_REF: ${{ env.CERT_GITHUB_WORKFLOW_REF }}
+        run: |
+          set -e
+          echo "=== Environment passed to chainsaw ==="
+          echo "TEST_IMAGE_URL=${TEST_IMAGE_URL}"
+          echo "CERT_GITHUB_WORKFLOW_REPOSITORY=${CERT_GITHUB_WORKFLOW_REPOSITORY}"
+          echo "CERT_GITHUB_WORKFLOW_REF=${CERT_GITHUB_WORKFLOW_REF}"
+          echo "=== Running chainsaw ==="
+          chainsaw test --config .chainsaw.yaml
+
+      - name: Debug failure
+        if: failure()
+        run: |
+          echo "=== Kyverno Admission Controller Logs ==="
+          kubectl -n kyverno logs -l app.kubernetes.io/component=admission-controller --tail=100 || true
+          echo "=== Kyverno Events ==="
+          kubectl get events -A --sort-by='.lastTimestamp' | tail -30 || true
+          echo "=== ImageValidatingPolicies ==="
+          kubectl get imagevalidatingpolicies -A -o yaml || true
+
